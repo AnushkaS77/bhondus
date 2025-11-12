@@ -1,47 +1,34 @@
-"use server";
 
-import OpenAI from "openai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import Book from "@/models/book";
 import { authCheckAction } from "@/actions/auth";
 import slugify from "slugify";
 import { nanoid } from "nanoid";
 import db from "@/utils/db";
 
-// ✅ Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY, // use OPENAI_API_KEY instead of OPEN_API_KEY
-});
+const genAi = new GoogleGenerativeAI(process.env.OPEN_API_KEY);
 
-// ✅ Generate story using OpenAI
 export async function generateStoryAi(prompt) {
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // small + fast model
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
+  const model = genAi.getGenerativeModel({ 
+    model: "gpt-4o-mini",
+    generationConfig: {
       temperature: 0.8,
-      top_p: 0.95,
-      max_tokens: 2048,
-    });
+      topK: 40,
+      topP: 0.95,
+      maxOutputTokens: 2048,
+    }
+  });
 
-    const text = response.choices[0].message.content;
+  const result = await model.generateContent(prompt);
+  const response = result.response;
+  const text = response.text();
 
-    // Clean + Parse JSON safely
-    const cleanResponse = text.trim().replace(/^```json|```$/g, "");
-    const parsedResponse = JSON.parse(cleanResponse);
+  const cleanResponse = text.trim().replace(/^```json|```$/g, "");
+  const parsedResponse = JSON.parse(cleanResponse);
 
-    return parsedResponse;
-  } catch (err) {
-    console.error("Error generating story:", err);
-    throw new Error("AI generation failed. Please try again.");
-  }
+  return parsedResponse;
 }
 
-// ✅ Save generated story to DB
 export async function saveStoryDb(data) {
   try {
     const { user } = await authCheckAction();
@@ -65,7 +52,6 @@ export async function saveStoryDb(data) {
   }
 }
 
-// ✅ Fetch paginated books
 export const getBooksDb = async (page, limit) => {
   try {
     db();
@@ -89,10 +75,10 @@ export const getBooksDb = async (page, limit) => {
   }
 };
 
-// ✅ Fetch single book by slug
 export const getBookDb = async (slug) => {
   try {
     db();
+
     const book = await Book.findOne({ slug }).populate("author", "name");
     return JSON.parse(JSON.stringify(book));
   } catch (err) {
@@ -100,7 +86,6 @@ export const getBookDb = async (slug) => {
   }
 };
 
-// ✅ Fetch books of logged-in user
 export const getUserBooksDb = async (page, limit) => {
   try {
     db();
@@ -130,7 +115,6 @@ export const getUserBooksDb = async (page, limit) => {
   }
 };
 
-// ✅ Delete book
 export const deleteBookDb = async (id) => {
   try {
     db();
@@ -147,6 +131,12 @@ export const deleteBookDb = async (id) => {
       throw new Error("You are not authorized to delete this story");
     }
 
+    // const book = await Book.findOneAndDelete({
+    //   _id: id,
+    //   author: user._id,
+    // }).select(["-chapters"]);
+
+    // await book.remove();
     await Book.findByIdAndDelete(id);
 
     return { success: true };
@@ -155,20 +145,20 @@ export const deleteBookDb = async (id) => {
   }
 };
 
-// ✅ Search books
 export const searchBooksDb = async (query) => {
   try {
-    await db();
+    await db(); // Ensure database connection
 
     const books = await Book.find({
-      $text: { $search: query },
+      $text: { $search: query }, // Full-text search on both bookTitle and chapters.textContent
     })
-      .sort({ score: { $meta: "textScore" } })
+      .sort({ score: { $meta: "textScore" } }) // Sort by relevance based on text search
       .limit(100)
       .exec();
 
+    // Return the result as JSON
     console.log("books searched => ", books.length);
-    return JSON.parse(JSON.stringify(books));
+    return JSON.parse(JSON.stringify(books)); // Corrected variable name from blogs to books
   } catch (err) {
     console.error("Error in searchBooksDb:", err.message);
     throw new Error(err);

@@ -36,7 +36,9 @@ export const AuthProvider = ({ children }) => {
       // console.log("res in getCurrentUser in context ===> ", res);
 
       if (res.user) {
-        setUser(res.user);
+        setUser((prev) => ({ ...prev, ...res.user }));
+      } else {
+        setUser(initialState);
       }
       setLoggedIn(res.loggedIn);
     } catch (err) {
@@ -59,7 +61,7 @@ export const AuthProvider = ({ children }) => {
         toast.error(res.error);
         setLoading(false);
       } else {
-        setUser(res.user);
+        setUser((prev) => ({ ...prev, ...res.user }));
         setLoggedIn(res.loggedIn);
         toast.success(`Welcome ${res.user.name}!`);
         // redirect

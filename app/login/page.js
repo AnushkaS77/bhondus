@@ -27,8 +27,10 @@ export default function LoginPage() {
             <Input
               type="email"
               name="email"
-              value={user?.email}
-              onChange={(e) => setUser({ ...user, email: e.target.value })}
+              value={user?.email ?? ""}
+              onChange={(e) =>
+                setUser((prev) => ({ ...prev, email: e.target.value }))
+              }
               placeholder="Email"
               className="col-span-3 border-purple-500"
               required
@@ -37,15 +39,17 @@ export default function LoginPage() {
             <Input
               type="password"
               name="password"
-              value={user?.password}
-              onChange={(e) => setUser({ ...user, password: e.target.value })}
+              value={user?.password ?? ""}
+              onChange={(e) =>
+                setUser((prev) => ({ ...prev, password: e.target.value }))
+              }
               placeholder="Password"
               className="col-span-3 border-purple-500"
               required
             />
 
             <Button
-              disable={loading}
+              disabled={loading}
               type="submit"
               className="bg-red-800 text-white hover:bg-red-500"
             >
