@@ -1,10 +1,10 @@
 "use client";
-import React from "react";
+import React, { useState, useLayoutEffect, useCallback, useRef, useEffect } from "react";
 import Image from "next/image";
-import { useState, useLayoutEffect, useCallback, useRef } from "react";
 import HTMLFlipbook from "react-pageflip";
 import { Button } from "@/components/ui/button";
 import { Book, BookOpen, ChevronLeft, ChevronRight } from "lucide-react";
+import { speakText, stopSpeaking, isSpeechSupported } from "@/utils/textToSpeech";
 
 function debounce(func, wait) {
   let timeout;
@@ -24,12 +24,42 @@ const colorVariants = {
   purple: "from-purple-200 to purple-100",
 };
 
+const allowedImageHosts = new Set([
+  "res.cloudinary.com",
+  "source.unsplash.com",
+  "dummyimage.com",
+  "picsum.photos",
+]);
+
+const FALLBACK_IMAGE = "/images/stories.png";
+
+const getSafeImageSrc = (src) => {
+  if (!src) return FALLBACK_IMAGE;
+  if (src.startsWith("/")) return src;
+
+  try {
+    const { hostname } = new URL(src);
+    if (allowedImageHosts.has(hostname)) {
+      return src;
+    }
+  } catch (err) {
+    console.warn("Invalid image URL provided to getSafeImageSrc", src, err);
+  }
+
+  return FALLBACK_IMAGE;
+};
+
 export default function BookView({ data }) {
   const bookRef = useRef(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [key, setKey] = useState(0);
   const [color, setColor] = useState("gray");
+  const [canUseSpeech, setCanUseSpeech] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  const fullStoryText =
+    data?.chapters?.map((chapter) => chapter.textContent).join(" ") || "";
 
   const updateDimensions = useCallback(() => {
     setDimensions({
@@ -50,6 +80,36 @@ export default function BookView({ data }) {
   }, [updateDimensions]);
 
   const isSinglePage = dimensions.width < 768;
+
+  useEffect(() => {
+    // Check browser support for the Web Speech API on the client
+    setCanUseSpeech(isSpeechSupported());
+
+    // Stop any ongoing speech if this component unmounts
+    return () => {
+      stopSpeaking();
+    };
+  }, []);
+
+  const handleReadStory = () => {
+    if (!canUseSpeech || !fullStoryText) return;
+
+    // Make sure we never overlap speech
+    stopSpeaking();
+
+    const utterance = speakText(fullStoryText);
+    if (!utterance) return;
+
+    setIsSpeaking(true);
+
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+  };
+
+  const handleStopReading = () => {
+    stopSpeaking();
+    setIsSpeaking(false);
+  };
 
   if (dimensions.width === 0) return null;
 
@@ -108,11 +168,11 @@ export default function BookView({ data }) {
           className={`flex flex-col justify-center items-center p-6 h-full bg-gradient-to-b ${colorVariants[color]} relative`}
         >
           <Image
-            src={data.bookCoverUrl} // Replace with your actual cover image URL variable
-            alt="Book Cover"
-            fill={true}
-            style={{ objectFit: "cover" }}
-            className="absolute inset-0 -z-10"
+            src={getSafeImageSrc(data?.bookCoverUrl)}
+            alt={data?.bookTitle || "Book cover"}
+            fill
+            className="object-cover rounded-md"
+            priority
           />
           <h1 className="flex justify-center items-center h-screen text-4xl font-bold text-center text-white">
             {data.bookTitle}
@@ -135,7 +195,7 @@ export default function BookView({ data }) {
               <h1 className="text-4xl font-bold mb-6">{page.subTitle}</h1>
               <div className="relative w-full h-96 mt-4 mb-12">
                 <Image
-                  src={page.imageUrl}
+                  src={getSafeImageSrc(page.imageUrl)}
                   alt={page.subTitle}
                   fill={true}
                   style={{ ovjectFit: "cover" }}
@@ -215,6 +275,27 @@ export default function BookView({ data }) {
             ></div>
           ))}
         </div>
+
+        {canUseSpeech && (
+          <div className="flex items-center space-x-2 ml-4">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleReadStory}
+              disabled={isSpeaking || !fullStoryText}
+            >
+              Read Story
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleStopReading}
+              disabled={!isSpeaking}
+            >
+              Stop
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );
