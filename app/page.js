@@ -25,7 +25,7 @@ export default function LandingPage() {
             </Link>
           </div>
           <p className="text-sm text-purple-700">
-            Join 150,000+ other families using Story Spark to cultivate their
+            Join 150,000+ other families using Story Tailor to cultivate their
             child's passion for reading.
           </p>
         </div>
@@ -47,14 +47,14 @@ export default function LandingPage() {
           <h2 className="text-3xl font-bold text-center mb-12">
             EASY TO GET STARTED
           </h2>
-          <div className="max-w-3xl mx-auto">
+          <div className="max-w-5xl mx-auto">
             <Link href="/dashboard/generate-book">
               <Image
                 src="/images/create-form.png"
                 alt="Story Creation Form"
-                width={800}
-                height={400}
-                className="w-full rounded-xl shadow-xl"
+                width={1200}
+                height={675}
+                className="w-full rounded-2xl shadow-2xl"
                 priority
               />
             </Link>
@@ -190,17 +190,17 @@ const works = [
 
 const reviews = [
   {
-    name: "Sarah",
+    name: "Unmesha",
     location: "Los Angeles, CA",
     testimonial: `"Thank you! I love that in just a few clicks I can create a personalized story for my children that they absolutely love!"`,
   },
   {
-    name: "Michael",
+    name: "Varsha",
     location: "Sydney, Australia",
     testimonial: `"This tool is amazing! My son was thrilled to see a story featuring his name and favorite animals. It's like magic!"`,
   },
   {
-    name: "Emily",
+    name: "Sachin",
     location: "London, UK",
     testimonial: `"I can't believe this is free! The stories are creative, fun, and my daughter can't stop reading them. Highly recommend it!"`,
   },

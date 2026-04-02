@@ -1,8 +1,8 @@
 "use server";
+
 import Replicate from "replicate";
 import { v2 as cloudinary } from "cloudinary";
 import { nanoid } from "nanoid";
-import fetch from "node-fetch";
 
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
@@ -14,57 +14,172 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-export async function generateImageAi(imagePrompt) {
-  try {
-    // step 1: generate image using replicate api
-    const input = {
-      prompt: imagePrompt,
-      output_format: "png",
-      output_quality: 80,
-      aspect_ratio: "1:1",
-    };
+/**
+ * Replicate SDXL output size (multiples of 8). Tuned to match bookview.js only
+ * (cover: full width × 75% page height; chapters: 80% width × h-96) so object-cover
+ * crops less. Display markup is unchanged.
+ */
+const IMAGE_GEN_SIZE = {
+  cover: { width: 1024, height: 912 }, // ~ page W : 0.75H on typical flipbook spread
+  chapter: { width: 1024, height: 640 }, // ~ w-4/5 × 384px (h-96) on a ~800px-wide page
+};
 
-    const output = await replicate.run(
-      "bytedance/sdxl-lightning-4step:5599ed30703defd1d160a25a63321b4dec97101d98b4674bcc56e41f62f35637",
+function withTimeout(promise, ms = 120000) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("TIMEOUT")), ms)
+    ),
+  ]);
+}
+
+async function withRetry(task, retries = 1) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await task();
+    } catch (err) {
+      lastError = err;
+      const message = String(err?.message || "");
+      const isRateLimited = message.includes("status 429");
+      if (isRateLimited) {
+        const retryAfterMatch = message.match(/"retry_after"\s*:\s*(\d+)/);
+        const retryAfterSeconds = retryAfterMatch
+          ? Number(retryAfterMatch[1])
+          : 8;
+        await new Promise((resolve) =>
+          setTimeout(resolve, (retryAfterSeconds + 1) * 1000)
+        );
+      }
+      if (attempt === retries) throw err;
+    }
+  }
+  throw lastError;
+}
+
+async function toBuffer(outputItem) {
+  if (!outputItem) return null;
+
+  if (typeof outputItem === "string") {
+    const response = await withTimeout(fetch(outputItem), 45000);
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  if (outputItem?.url && typeof outputItem.url === "function") {
+    const response = await withTimeout(fetch(outputItem.url()), 45000);
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  const arrayBuffer = await new Response(outputItem).arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+async function uploadBufferToCloudinary(buffer) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("TIMEOUT"));
+    }, 45000);
+
+    const stream = cloudinary.uploader.upload_stream(
       {
-        input: {
-          prompt: imagePrompt,
-          output_format: "png",
-          output_quality: 80,
-          aspect_ratio: "1:1",
-        }
+        folder: "ai_kids_book",
+        public_id: nanoid(),
+        resource_type: "image",
+        transformation: [{ quality: "auto", fetch_format: "auto" }],
+      },
+      (error, result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        if (error) reject(error);
+        else resolve(result);
       }
     );
-    
-    const imageUrl = output[0];
 
-    // step 2: fetch the image data from the generated image url
-    const response = await fetch(imageUrl);
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    stream.end(buffer);
+  });
+}
 
-    // step 3: upload the image to cloudinary using a buffer
-    const uploadResponse = await new Promise((resolve, reject) => {
-      cloudinary.uploader
-        .upload_stream(
-          {
-            folder: "ai_kids_book",
-            public_id: nanoid(),
+async function generateWithReplicate(prompt, sizeKey = "chapter") {
+  const model =
+    "bytedance/sdxl-lightning-4step:6f7a773af6fc3e8de9d5a3c00be77c17308914bf67772726aff83496ba1e3bbe";
+
+  const { width, height } = IMAGE_GEN_SIZE[sizeKey] || IMAGE_GEN_SIZE.chapter;
+
+  const output = await withRetry(
+    () =>
+      withTimeout(
+        replicate.run(model, {
+          input: {
+            prompt,
+            negative_prompt:
+              "rabbits, bunny, multiple different animals, duplicate characters, extra characters, wrong species, wrong colors, inconsistent design, unrelated subjects, collage, text, watermark, logo, words, letters, generic mascot, repeated composition, cloned character, extra limbs",
+            width,
+            height,
+            scheduler: "K_EULER",
+            num_outputs: 1,
+            guidance_scale: 5,
+            num_inference_steps: 10,
           },
-          (error, result) => {
-            if (error) reject(error);
-            else resolve(result);
-          }
-        )
-        .end(buffer);
-    });
+        }),
+        120000
+      ),
+    2
+  );
 
-    // step 4: return the cloudinary image url
-    const cloudinaryUrl = uploadResponse.secure_url;
-    console.log("cloudinary image => ", cloudinaryUrl);
-    return cloudinaryUrl;
+  const firstOutput = output?.[0];
+  if (!firstOutput) throw new Error("Replicate returned no image");
+  return toBuffer(firstOutput);
+}
+
+/**
+ * @param {string} prompt
+ * @param {"cover" | "chapter"} [sizeKey] - matches bookview image frames (no UI changes).
+ */
+export async function generateImageAi(prompt, sizeKey = "chapter") {
+  try {
+    const buffer = await generateWithReplicate(prompt, sizeKey);
+
+    if (!buffer) return { success: false, error: "Image generation failed" };
+
+    const uploadResult = await uploadBufferToCloudinary(buffer);
+
+    return {
+      success: true,
+      url: uploadResult.secure_url,
+    };
   } catch (err) {
-    console.error(err);
-    throw new Error(err.message);
+    const message = String(err?.message || "");
+
+    if (message === "TIMEOUT") {
+      return {
+        success: false,
+        error: "TIMEOUT",
+      };
+    }
+
+    const lower = message.toLowerCase();
+    const isTooManyRequests =
+      lower.includes("429") ||
+      lower.includes("too many requests") ||
+      lower.includes("rate limit") ||
+      lower.includes("status 429");
+
+    if (isTooManyRequests) {
+      return {
+        success: false,
+        error: "TOO_MANY_REQUESTS",
+      };
+    }
+
+    console.error("generateImageAi error:", err.message);
+
+    return {
+      success: false,
+      error: "IMAGE_FAILED",
+    };
   }
 }
