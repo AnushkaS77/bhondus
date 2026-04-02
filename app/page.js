@@ -47,14 +47,14 @@ export default function LandingPage() {
           <h2 className="text-3xl font-bold text-center mb-12">
             EASY TO GET STARTED
           </h2>
-          <div className="max-w-5xl mx-auto">
+          <div className="max-w-3xl mx-auto">
             <Link href="/dashboard/generate-book">
               <Image
                 src="/images/create-form.png"
                 alt="Story Creation Form"
-                width={1200}
-                height={675}
-                className="w-full rounded-2xl shadow-2xl"
+                width={900}
+                height={500}
+                className="w-full rounded-xl shadow-xl"
                 priority
               />
             </Link>

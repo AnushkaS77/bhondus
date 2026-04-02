@@ -116,13 +116,13 @@ async function generateWithReplicate(prompt, sizeKey = "chapter") {
           input: {
             prompt,
             negative_prompt:
-              "rabbits, bunny, multiple different animals, duplicate characters, extra characters, wrong species, wrong colors, inconsistent design, unrelated subjects, collage, text, watermark, logo, words, letters, generic mascot, repeated composition, cloned character, extra limbs",
+              "multiple different animals, rabbits, duplicate characters, extra characters, wrong species, wrong colors, inconsistent design, unrelated subjects, collage, text, watermark",
             width,
             height,
             scheduler: "K_EULER",
             num_outputs: 1,
             guidance_scale: 5,
-            num_inference_steps: 10,
+            num_inference_steps: 8,
           },
         }),
         120000
