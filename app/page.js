@@ -72,47 +72,31 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* image section */}
-      <section>
-        <div className={`relative pt-52 pb-52 overflow-hidden`}>
-          <div
-            className="absolute inset-0 bg-cover bg-center bg-no-repeat bg-fixed"
-            style={{ backgroundImage: `url('/images/book1.png')` }} // Corrected here
-          ></div>
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-purple-900 opacity-90"></div>
-        </div>
-      </section>
+      {/* spacer section (image removed for cleaner flow) */}
+      <section className="h-16 bg-purple-300" />
 
-      <section className="py-20 bg-gradient-to-b from-purple-300 to-purple-500">
+      <section className="py-24 bg-gradient-to-b from-purple-300 to-purple-500">
         <div className="container mx-auto px-4">
-          <h2 className="text-3xl font-bold mb-12 text-center bg-clip-text bg-gradient-to-r from-purple-400 to-purple-900">
+          <h2 className="text-4xl md:text-5xl font-bold mb-14 text-center bg-clip-text bg-gradient-to-r from-purple-400 to-purple-900">
             HOW IT WORKS
           </h2>
-          <div className="grid md:grid-cols-3 gap-8">
+          <div className="grid md:grid-cols-3 gap-10 md:gap-12">
             {works.map((step, index) => (
               <div
                 key={index}
-                className="flex flex-col items-center text-center"
+                className="flex flex-col items-center text-center rounded-2xl bg-white/30 px-4 py-6"
               >
                 <GradientIcon imageSrc={step.image} />
-                <h3 className="text-xl font-semibold mb-2">{step.title}</h3>
-                <p>{step.description}</p>
+                <h3 className="text-2xl md:text-3xl font-semibold mb-3">{step.title}</h3>
+                <p className="text-base md:text-lg">{step.description}</p>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* image section */}
-      <section>
-        <div className={`relative pt-52 pb-52 overflow-hidden`}>
-          <div
-            className="absolute inset-0 bg-cover bg-center bg-no-repeat bg-fixed"
-            style={{ backgroundImage: `url('/images/book3.png')` }} // Corrected here
-          ></div>
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-purple-900 opacity-90"></div>
-        </div>
-      </section>
+      {/* spacer section (image removed for cleaner flow) */}
+      <section className="h-16 bg-purple-400" />
 
       {/* Our stories */}
       <section className="relative py-24 overflow-hidden">
@@ -183,7 +167,7 @@ const works = [
   },
   {
     image: "/icons/publish.png",
-    title: "4. Publish",
+    title: "3. Publish",
     description: "View and share your books with your kids and family",
   },
 ];
@@ -207,7 +191,7 @@ const reviews = [
 ];
 
 const GradientIcon = ({ imageSrc }) => (
-  <div className="relative w-16 h-16 mb-4">
+  <div className="relative w-24 h-24 md:w-28 md:h-28 mb-5">
     <img
       src={imageSrc}
       alt="Step icon"

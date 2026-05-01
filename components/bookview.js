@@ -13,7 +13,7 @@ import { Book, BookOpen, ChevronLeft, ChevronRight } from "lucide-react";
 import { speakText, stopSpeaking, isSpeechSupported } from "@/utils/textToSpeech";
 
 const FEEDBACK_STORAGE_KEY = "lastViewedBookForFeedback";
-const VIEW_LIMIT_MS = 5 * 60 * 1000;
+const VIEW_LIMIT_MS = 3.5 * 60 * 1000;
 
 function debounce(func, wait) {
   let timeout;
@@ -692,7 +692,7 @@ export default function BookView({ data }) {
         </div>
       </HTMLFlipbook>
 
-      <div className="mt-5 mx-auto max-w-4xl w-full flex flex-wrap items-center justify-center gap-3 rounded-lg border bg-white/80 p-3 shadow-lg">
+      <div className="sticky bottom-3 z-30 mt-5 mx-auto max-w-4xl w-full flex flex-wrap items-center justify-center gap-3 rounded-lg border bg-white/90 p-3 shadow-lg backdrop-blur">
         {/* prev */}
         <div
           className={`p-2 rounded-full hover:bg-opacity-70 bg-transparent ${

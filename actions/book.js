@@ -106,29 +106,83 @@ function detectMainAnimal(text = "") {
   return animals.find((animal) => normalized.includes(animal)) || "";
 }
 
+function sanitizeForImageSafety(text = "") {
+  if (!text) return "";
+
+  // Keep prompts kid-safe and reduce false-positive NSFW blocks from image model safety filters.
+  const replacements = [
+    [/\bmurder(s|ed|ing)?\b/gi, "defeat"],
+    [/\bkill(s|ed|ing)?\b/gi, "stop"],
+    [/\bdead\b/gi, "sleeping"],
+    [/\bdeath(s)?\b/gi, "danger"],
+    [/\bblood(y)?\b/gi, "red paint"],
+    [/\bweapon(s)?\b/gi, "tool"],
+    [/\bgun(s)?\b/gi, "toy launcher"],
+    [/\bkni(fe|ves)\b/gi, "kitchen tool"],
+    [/\battack(s|ed|ing)?\b/gi, "chase"],
+    [/\bviolence\b/gi, "conflict"],
+    [/\bnude|nudity|naked\b/gi, "fully clothed"],
+    [/\bsexy|sex\b/gi, "friendly"],
+  ];
+
+  return replacements.reduce(
+    (acc, [pattern, replacement]) => acc.replace(pattern, replacement),
+    String(text)
+  );
+}
+
+function getShotTypeInstruction(pageNumber) {
+  const shotTypes = [
+    "wide shot showing full environment",
+    "medium shot focused on character actions",
+    "close-up shot focused on emotion",
+    "over-the-shoulder storytelling shot",
+    "low-angle cinematic shot",
+  ];
+
+  if (pageNumber == null) return shotTypes[0];
+  const index = (Math.max(1, Number(pageNumber)) - 1) % shotTypes.length;
+  return shotTypes[index];
+}
+
 function buildIllustrationPrompt({
   characterDescription,
   sceneDescription,
   storyContext = "",
   isCover = false,
+  pageNumber = null,
 }) {
-  const combinedText = `${characterDescription} ${sceneDescription} ${storyContext}`;
+  const safeCharacterDescription = sanitizeForImageSafety(characterDescription);
+  const safeSceneDescription = sanitizeForImageSafety(sceneDescription);
+  const safeStoryContext = sanitizeForImageSafety(storyContext);
+
+  const combinedText = `${safeCharacterDescription} ${safeSceneDescription} ${safeStoryContext}`;
   const mainAnimal = detectMainAnimal(combinedText);
   const animalInstruction = mainAnimal
     ? `Main animal: ${mainAnimal}. The image must clearly show a ${mainAnimal} and must not replace it with any other animal.`
     : "Use the exact animal or character described and do not replace it with a different one.";
+  const pageInstruction =
+    pageNumber == null
+      ? ""
+      : `This is page ${pageNumber}. Make this page visibly different from all other pages.`;
+  const shotTypeInstruction = getShotTypeInstruction(pageNumber);
 
-  return `Children's storybook illustration, soft colorful cartoon style.
+  return `Children's storybook illustration in detailed digital painting style.
 ${animalInstruction}
-Character design: ${characterDescription || "Keep the same recurring main character design across the whole book."}
-Scene: ${sceneDescription}
-${storyContext ? `Story context: ${storyContext}` : ""}
+Character design: ${safeCharacterDescription || "Keep the same recurring main character design across the whole book."}
+Scene: ${safeSceneDescription}
+${safeStoryContext ? `Story context: ${safeStoryContext}` : ""}
+${pageInstruction}
+Shot type: ${shotTypeInstruction}.
 Important rules:
 - Show the same main character consistently across the book.
 - Match the scene exactly.
 - Do not add extra animals or extra characters unless the scene requires them.
 - Do not generate rabbits, bunnies, or unrelated animals unless they are explicitly described.
 - Use a unique pose, action, expression, background, and camera angle for this scene.
+- Use a different composition from other pages (different shot type: close-up, medium, or wide as appropriate).
+- Visual style must be digital painting (rich color gradients, soft brush texture, cinematic lighting, high detail).
+- Do not use flat cartoon style, anime/manga style, pencil sketch style, or black-and-white ink style.
 - No text, no watermark.
 ${isCover ? "- This image establishes the main character design for the whole book." : ""}`;
 }
@@ -208,7 +262,7 @@ export async function saveStoryDb(data) {
 
     const resolvedCoverSceneDescription =
       coverSceneDescription ||
-      `A vibrant, cartoon-style kids storybook cover for "${data.bookTitle}"`;
+      `A vibrant digital-painting kids storybook cover for "${data.bookTitle}"`;
 
     const coverPrompt = buildIllustrationPrompt({
       characterDescription,
@@ -240,7 +294,7 @@ export async function saveStoryDb(data) {
               ? chapter.imageDescription.trim()
               : typeof chapter.textContent === "string"
                 ? chapter.textContent.trim()
-                : `A vibrant, cartoon-style storybook illustration for page ${chapter.page}`;
+                : `A vibrant digital-painting storybook illustration for page ${chapter.page}`;
 
         const chapterStoryContext = `${chapter.subTitle || ""} ${chapter.textContent || ""}`
           .trim()
@@ -250,6 +304,7 @@ export async function saveStoryDb(data) {
           characterDescription,
           sceneDescription,
           storyContext: chapterStoryContext,
+          pageNumber: chapter.page ?? null,
         });
 
         chapter.imageUrl = await safeGenerateImage(chapterPrompt, "chapter");

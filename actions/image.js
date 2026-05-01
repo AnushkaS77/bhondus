@@ -121,8 +121,8 @@ async function generateWithReplicate(prompt, sizeKey = "chapter") {
             height,
             scheduler: "K_EULER",
             num_outputs: 1,
-            guidance_scale: 5,
-            num_inference_steps: 8,
+            guidance_scale: 6,
+            num_inference_steps: 10,
           },
         }),
         120000
