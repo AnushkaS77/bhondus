@@ -3,6 +3,7 @@ import { getBooksDb } from "@/actions/book";
 import Link from "next/link";
 import Pagination from "@/components/pagination";
 import Bookcard from "@/components/bookcard";
+import LibraryFeedbackPrompt from "@/components/library-feedback-prompt";
 
 export default async function BooksPage({ searchParams }) {
   const { page } = await searchParams;
@@ -19,6 +20,7 @@ export default async function BooksPage({ searchParams }) {
         <p className="text-sm text-gray-500">
           Total books: {totalPages * limit}
         </p>
+        <LibraryFeedbackPrompt />
         <br />
 
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">

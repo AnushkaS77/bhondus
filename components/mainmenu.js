@@ -12,7 +12,7 @@ export default function MainMenu() {
       <Link href="/" className="flex items-center mx-2 mt-2">
         <Image src="/logo.png" alt="logo" width={50} height={50} />
         <span className="ml-2 text-xl font-bold text-purple-800">
-          AI Kids Book
+        Story Tailor
         </span>
       </Link>
 

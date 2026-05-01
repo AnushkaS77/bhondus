@@ -4,6 +4,7 @@ import Link from "next/link";
 import BookCard from "@/components/bookcard";
 import Pagination from "@/components/pagination";
 import OverlayButtons from "@/components/bookcard-overlay-buttons";
+import LibraryFeedbackPrompt from "@/components/library-feedback-prompt";
 
 export default async function DashboardPage({ searchParams }) {
   const { page } = await searchParams;
@@ -20,6 +21,7 @@ export default async function DashboardPage({ searchParams }) {
         <p className="text-sm text-gray-500">
           Total books: {totalPages * limit}
         </p>
+        <LibraryFeedbackPrompt />
 
         <br />
 

@@ -1,10 +1,19 @@
 "use client";
-import React, { useState, useLayoutEffect, useCallback, useRef, useEffect } from "react";
+import React, {
+  useState,
+  useLayoutEffect,
+  useCallback,
+  useRef,
+  useEffect,
+} from "react";
 import Image from "next/image";
 import HTMLFlipbook from "react-pageflip";
 import { Button } from "@/components/ui/button";
 import { Book, BookOpen, ChevronLeft, ChevronRight } from "lucide-react";
 import { speakText, stopSpeaking, isSpeechSupported } from "@/utils/textToSpeech";
+
+const FEEDBACK_STORAGE_KEY = "lastViewedBookForFeedback";
+const VIEW_LIMIT_MS = 3.5 * 60 * 1000;
 
 function debounce(func, wait) {
   let timeout;
@@ -31,10 +40,8 @@ const allowedImageHosts = new Set([
   "picsum.photos",
 ]);
 
-const FALLBACK_IMAGE = "/images/stories.png";
-
 const getSafeImageSrc = (src) => {
-  if (!src) return FALLBACK_IMAGE;
+  if (!src) return null;
   if (src.startsWith("/")) return src;
 
   try {
@@ -46,10 +53,29 @@ const getSafeImageSrc = (src) => {
     console.warn("Invalid image URL provided to getSafeImageSrc", src, err);
   }
 
-  return FALLBACK_IMAGE;
+  return null;
+};
+
+const getWordStartIndices = (text) => {
+  const starts = [];
+  const regex = /\S+/g;
+  let match = regex.exec(text);
+  while (match) {
+    starts.push(match.index);
+    match = regex.exec(text);
+  }
+  return starts;
 };
 
 export default function BookView({ data }) {
+  if (!data) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <p className="text-lg text-gray-700">Story not found.</p>
+      </div>
+    );
+  }
+
   const bookRef = useRef(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
@@ -57,9 +83,28 @@ export default function BookView({ data }) {
   const [color, setColor] = useState("gray");
   const [canUseSpeech, setCanUseSpeech] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [isAudioOnlyMode, setIsAudioOnlyMode] = useState(false);
+  const [timeLeftMs, setTimeLeftMs] = useState(VIEW_LIMIT_MS);
+  const utteranceRef = useRef(null);
+  const stopRequestedRef = useRef(false);
+  const audioModeAutoStartedRef = useRef(false);
+  const audioModeSessionStartedRef = useRef(false);
+  const audioReadSessionInProgressRef = useRef(false);
+  const [highlightedWordIndex, setHighlightedWordIndex] = useState(null);
+  const wordsPerChapterRef = useRef([]);
+  const readingTextRef = useRef("");
+  const titleWords = (data.bookTitle || "").split(/\s+/).filter(Boolean);
 
-  const fullStoryText =
-    data?.chapters?.map((chapter) => chapter.textContent).join(" ") || "";
+  const chapterTexts = (data.chapters || []).map(
+    (chapter) => chapter.textContent || ""
+  );
+
+  const hasReadableText = Boolean(
+    (data.bookTitle || "").trim() ||
+      (data.author?.name || "").trim() ||
+      chapterTexts.join(" ").trim()
+  );
 
   const updateDimensions = useCallback(() => {
     setDimensions({
@@ -87,31 +132,338 @@ export default function BookView({ data }) {
 
     // Stop any ongoing speech if this component unmounts
     return () => {
+      stopRequestedRef.current = true;
       stopSpeaking();
+      utteranceRef.current = null;
+      setHighlightedWordIndex(null);
+      wordsPerChapterRef.current = [];
     };
   }, []);
 
-  const handleReadStory = () => {
-    if (!canUseSpeech || !fullStoryText) return;
+  useEffect(() => {
+    if (!data?._id || !data?.bookTitle) return;
+    try {
+      localStorage.setItem(
+        FEEDBACK_STORAGE_KEY,
+        JSON.stringify({
+          id: data._id,
+          title: data.bookTitle,
+          slug: data.slug,
+          viewedAt: Date.now(),
+        })
+      );
+    } catch (err) {
+      console.error("Failed to save viewed book for feedback", err);
+    }
+  }, [data?._id, data?.bookTitle, data?.slug]);
 
-    // Make sure we never overlap speech
-    stopSpeaking();
+  useEffect(() => {
+    // Reset mode every time this book view is opened.
+    setIsAudioOnlyMode(false);
+    audioModeAutoStartedRef.current = false;
+    audioModeSessionStartedRef.current = false;
+    audioReadSessionInProgressRef.current = false;
+    setTimeLeftMs(VIEW_LIMIT_MS);
 
-    const utterance = speakText(fullStoryText);
-    if (!utterance) return;
+    const sessionStart = Date.now();
+    const timeoutId = setTimeout(() => {
+      setIsAudioOnlyMode(true);
+    }, VIEW_LIMIT_MS);
 
-    setIsSpeaking(true);
+    const intervalId = setInterval(() => {
+      const elapsed = Date.now() - sessionStart;
+      const remaining = Math.max(0, VIEW_LIMIT_MS - elapsed);
+      setTimeLeftMs(remaining);
+    }, 1000);
 
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
+    return () => {
+      clearTimeout(timeoutId);
+      clearInterval(intervalId);
+    };
+  }, [data?._id]);
+
+  const formatCountdown = (ms) => {
+    const totalSeconds = Math.ceil(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(
+      2,
+      "0"
+    )}`;
   };
 
-  const handleStopReading = () => {
+  const timeProgressPercent = Math.max(
+    0,
+    Math.min(100, (timeLeftMs / VIEW_LIMIT_MS) * 100)
+  );
+  const isFinalThirtySeconds = timeLeftMs <= 30 * 1000;
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const flipToPage = async (pageIndex) => {
+    if (!bookRef.current) return;
+    try {
+      bookRef.current.pageFlip().flip(pageIndex, "top");
+    } catch (err) {
+      console.error("Page flip failed", err);
+    }
+    await sleep(450);
+  };
+
+  const speakSegment = (segment) =>
+    new Promise((resolve) => {
+      const text = (segment.text || "").trim();
+      if (!text) return resolve();
+      const wordStarts = getWordStartIndices(text);
+
+      const utterance = speakText(text, {
+        rate: 0.58,
+        pitch: 1.02,
+        onboundary: (event) => {
+          if (event.name && event.name !== "word") return;
+          if (event.charIndex == null || wordStarts.length === 0) return;
+
+          // Use the boundary char index so highlight starts when the word starts.
+          let localIndex = 0;
+          for (let i = 0; i < wordStarts.length; i += 1) {
+            if (wordStarts[i] <= event.charIndex) {
+              localIndex = i;
+            } else {
+              break;
+            }
+          }
+
+          localIndex = Math.max(0, Math.min(segment.wordCount - 1, localIndex));
+          setHighlightedWordIndex(segment.startIndex + localIndex);
+        },
+        onend: () => {
+          if (utteranceRef.current === utterance) utteranceRef.current = null;
+          resolve();
+        },
+        onerror: () => {
+          if (utteranceRef.current === utterance) utteranceRef.current = null;
+          resolve();
+        },
+      });
+
+      if (!utterance) return resolve();
+      utteranceRef.current = utterance;
+      setHighlightedWordIndex(segment.startIndex);
+    });
+
+  const handleReadStory = async () => {
+    if (!canUseSpeech || !hasReadableText) return;
+
+    // If we were paused, just resume the existing utterance
+    if (isPaused) {
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        window.speechSynthesis.resume();
+      }
+      setIsPaused(false);
+      setIsSpeaking(true);
+      return;
+    }
+
+    stopRequestedRef.current = false;
     stopSpeaking();
+
+    audioReadSessionInProgressRef.current = true;
+
+    // Build reading plan in the order: title -> author -> each chapter (subtitle + content)
+    const readingWords = [];
+    const readingPlan = [];
+    wordsPerChapterRef.current = [];
+
+    // Title words (not currently highlighted on cover, but included in reading)
+    if (data.bookTitle) {
+      const titleWordList = data.bookTitle.split(/\s+/).filter(Boolean);
+      const startIndex = readingWords.length;
+      readingWords.push(...titleWordList);
+      readingPlan.push({
+        text: data.bookTitle,
+        startIndex,
+        wordCount: titleWordList.length,
+        pageIndex: 0,
+        pauseAfterMs: 800,
+      });
+    }
+
+    // "By Author" segment
+    if (data.author?.name) {
+      const authorSegment = `By ${data.author.name}`;
+      const authorWords = authorSegment.split(/\s+/).filter(Boolean);
+      const startIndex = readingWords.length;
+      readingWords.push(...authorWords);
+      readingPlan.push({
+        text: authorSegment,
+        startIndex,
+        wordCount: authorWords.length,
+        pageIndex: 1,
+        pauseAfterMs: 700,
+      });
+    }
+
+    // Chapters: track subtitle + content word ranges for highlighting
+    (data.chapters || []).forEach((chapter, chapterIndex) => {
+      const subTitleText = chapter.subTitle || "";
+      const contentText = chapter.textContent || "";
+
+      const subTitleWords = subTitleText.split(/\s+/).filter(Boolean);
+      const contentWords = contentText.split(/\s+/).filter(Boolean);
+
+      const subTitleStart = readingWords.length;
+      readingWords.push(...subTitleWords);
+
+      const contentStart = readingWords.length;
+      readingWords.push(...contentWords);
+
+      wordsPerChapterRef.current.push({
+        subTitleStart,
+        subTitleLength: subTitleWords.length,
+        contentStart,
+        contentLength: contentWords.length,
+      });
+
+      if (subTitleWords.length > 0) {
+        readingPlan.push({
+          text: subTitleText,
+          startIndex: subTitleStart,
+          wordCount: subTitleWords.length,
+          pageIndex: chapterIndex + 2,
+          pauseAfterMs: 700,
+        });
+      }
+
+      if (contentWords.length > 0) {
+        readingPlan.push({
+          text: contentText,
+          startIndex: contentStart,
+          wordCount: contentWords.length,
+          pageIndex: chapterIndex + 2,
+          pauseAfterMs: 900,
+        });
+      }
+    });
+
+    readingTextRef.current = readingWords.join(" ");
+    if (readingPlan.length === 0) {
+      audioReadSessionInProgressRef.current = false;
+      return;
+    }
+
+    // Fresh read from the beginning
+    setIsPaused(false);
+    setIsSpeaking(true);
+    setHighlightedWordIndex(0);
+
+    for (const segment of readingPlan) {
+      if (stopRequestedRef.current) break;
+      await flipToPage(segment.pageIndex);
+      if (stopRequestedRef.current) break;
+      await speakSegment(segment);
+      if (stopRequestedRef.current) break;
+      await sleep(segment.pauseAfterMs);
+    }
+
+    setIsSpeaking(false);
+    setIsPaused(false);
+    utteranceRef.current = null;
+    setHighlightedWordIndex(null);
+    audioReadSessionInProgressRef.current = false;
+  };
+
+  useEffect(() => {
+    if (!isAudioOnlyMode) {
+      audioModeAutoStartedRef.current = false;
+      return;
+    }
+
+    if (!canUseSpeech || !hasReadableText) return;
+    if (audioModeAutoStartedRef.current) return;
+    if (isSpeaking || isPaused) return;
+
+    audioModeAutoStartedRef.current = true;
+    audioModeSessionStartedRef.current = true;
+    handleReadStory();
+  }, [isAudioOnlyMode, canUseSpeech, hasReadableText, isSpeaking, isPaused]);
+
+  // Auto-return to the main story when narration completes in audio mode.
+  useEffect(() => {
+    if (!isAudioOnlyMode) return;
+    if (!audioModeSessionStartedRef.current) return;
+    if (isSpeaking || isPaused) return;
+    if (audioReadSessionInProgressRef.current) return;
+    if (utteranceRef.current) return;
+
+    setIsAudioOnlyMode(false);
+    audioModeSessionStartedRef.current = false;
+  }, [isAudioOnlyMode, isSpeaking, isPaused]);
+
+  const handlePauseReading = () => {
+    if (!isSpeaking || !utteranceRef.current) return;
+
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.pause();
+    }
+
+    setIsPaused(true);
     setIsSpeaking(false);
   };
 
+  const handleStopReading = () => {
+    stopRequestedRef.current = true;
+    stopSpeaking();
+    utteranceRef.current = null;
+    setIsPaused(false);
+    setIsSpeaking(false);
+    setHighlightedWordIndex(null);
+    audioReadSessionInProgressRef.current = false;
+    audioModeSessionStartedRef.current = false;
+  };
+
+  const handleGoToAudioMode = () => {
+    audioModeSessionStartedRef.current = true;
+    setIsAudioOnlyMode(true);
+  };
+
+  const handleExitAudioMode = () => {
+    // When exiting audio mode, pause narration (do not stop it).
+    if (
+      typeof window !== "undefined" &&
+      window.speechSynthesis &&
+      window.speechSynthesis.speaking
+    ) {
+      window.speechSynthesis.pause();
+    }
+
+    setIsPaused(true);
+    setIsSpeaking(false);
+    setIsAudioOnlyMode(false);
+    audioModeSessionStartedRef.current = false;
+  };
+
   if (dimensions.width === 0) return null;
+  if (isAudioOnlyMode) {
+    return (
+      <div
+        className="fixed inset-0 text-white flex items-center justify-center px-6"
+        style={{ backgroundColor: "#000", width: "100vw", height: "100vh", zIndex: 2147483647 }}
+      >
+        <Button
+          variant="outline"
+          size="lg"
+          className="fixed bottom-8 right-8 bg-white text-black border-white hover:bg-gray-200 hover:text-black"
+          onClick={handleExitAudioMode}
+        >
+          Exit
+        </Button>
+
+        <h1 className="w-full max-w-4xl text-center text-4xl md:text-6xl font-bold leading-relaxed">
+          {titleWords.join(" ")}
+        </h1>
+      </div>
+    );
+  }
 
   const flipPrevPage = () => {
     if (bookRef.current) {
@@ -133,6 +485,34 @@ export default function BookView({ data }) {
 
   return (
     <div>
+      {!isAudioOnlyMode && (
+        <div
+          className={`mx-auto mb-3 max-w-3xl rounded-md border px-4 py-2 text-sm ${
+            isFinalThirtySeconds
+              ? "border-red-200 bg-red-50 text-red-900"
+              : "border-blue-200 bg-blue-50 text-blue-900"
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span>Audio mode in: {formatCountdown(timeLeftMs)}</span>
+            <div className="flex items-center gap-3">
+              {isFinalThirtySeconds && <span>Hurry up</span>}
+              <Button variant="outline" size="sm" onClick={handleGoToAudioMode}>
+                Go to audio mode
+              </Button>
+            </div>
+          </div>
+          <div className="mt-2 h-2 w-full rounded bg-white/80 overflow-hidden">
+            <div
+              className={`h-full transition-all duration-1000 ${
+                isFinalThirtySeconds ? "bg-red-500" : "bg-blue-500"
+              }`}
+              style={{ width: `${timeProgressPercent}%` }}
+            />
+          </div>
+        </div>
+      )}
+
       <HTMLFlipbook
         key={key}
         ref={bookRef}
@@ -167,47 +547,143 @@ export default function BookView({ data }) {
         <div
           className={`flex flex-col justify-center items-center p-6 h-full bg-gradient-to-b ${colorVariants[color]} relative`}
         >
-          <Image
-            src={getSafeImageSrc(data?.bookCoverUrl)}
-            alt={data?.bookTitle || "Book cover"}
-            fill
-            className="object-cover rounded-md"
-            priority
-          />
-          <h1 className="flex justify-center items-center h-screen text-4xl font-bold text-center text-white">
-            {data.bookTitle}
+          <div className="relative w-full h-3/4 mb-6 rounded-lg overflow-hidden border border-black/10">
+            {getSafeImageSrc(data.bookCoverUrl) ? (
+              <Image
+                src={getSafeImageSrc(data.bookCoverUrl)}
+                alt={data.bookTitle || "Book cover"}
+                fill
+                className="object-cover"
+                sizes="(max-width: 768px) 90vw, 45vw"
+                priority
+              />
+            ) : (
+              <div className="h-full w-full flex items-center justify-center bg-white/70 text-center text-sm text-gray-700 px-4">
+                Image not generated (rate limited / try again)
+              </div>
+            )}
+          </div>
+          <h1
+            className={`font-bold text-center text-black leading-relaxed ${
+              isAudioOnlyMode ? "text-3xl" : "text-4xl"
+            }`}
+          >
+            {titleWords.map((word, idx) => {
+              const isHighlighted = idx === highlightedWordIndex;
+              return (
+                <span
+                  key={`title-${idx}`}
+                  className={isHighlighted ? "bg-yellow-300 rounded-sm px-0.5" : undefined}
+                >
+                  {word}
+                  {idx !== titleWords.length - 1 ? " " : ""}
+                </span>
+              );
+            })}
           </h1>
         </div>
 
         <div className="flex flex-col justify-center items-center p-6 h-full">
-          <h1 className="flex justify-center items-center h-screen text-center">
-            By {data.author.name}
-          </h1>
+          {isAudioOnlyMode ? (
+            <div className="relative w-full h-3/4 rounded-lg overflow-hidden border border-black/10">
+              {getSafeImageSrc(data.bookCoverUrl) ? (
+                <Image
+                  src={getSafeImageSrc(data.bookCoverUrl)}
+                  alt={data.bookTitle || "Book cover"}
+                  fill
+                  className="object-cover"
+                  sizes="(max-width: 768px) 90vw, 45vw"
+                />
+              ) : (
+                <div className="h-full w-full flex items-center justify-center bg-white/70 text-center text-sm text-gray-700 px-4">
+                  Image not generated (rate limited / try again)
+                </div>
+              )}
+            </div>
+          ) : (
+            <h1 className="flex justify-center items-center h-screen text-center">
+              By {data.author.name}
+            </h1>
+          )}
         </div>
 
-        {data.chapters.map((page, index) => (
+        {(data.chapters || []).map((page, index) => {
+          const mapping = wordsPerChapterRef.current[index] || {
+            subTitleStart: 0,
+            subTitleLength: 0,
+            contentStart: 0,
+            contentLength: 0,
+          };
+          const subtitleWords = (page.subTitle || "").split(/\s+/).filter(Boolean);
+          const contentWords = (page.textContent || "").split(/\s+/).filter(Boolean);
+
+          return (
           <div
             key={index}
-            className={`flex flex-col justify-center items-center p-6 h-full bg-gradient-to-b ${colorVariants[color]} relative`}
+            className={`flex flex-col justify-center items-center p-6 h-full bg-gradient-to-b ${colorVariants[color]} relative border border-gray-300`}
             style={{ maxHeight: "100%" }}
           >
-            <div className="flex-1 overflow-y-auto">
-              <h1 className="text-4xl font-bold mb-6">{page.subTitle}</h1>
-              <div className="relative w-full h-96 mt-4 mb-12">
-                <Image
-                  src={getSafeImageSrc(page.imageUrl)}
-                  alt={page.subTitle}
-                  fill={true}
-                  style={{ ovjectFit: "cover" }}
-                  className="rounded shadow"
-                />
+            <div className="flex-1 overflow-y-auto w-full pb-12 px-1">
+              <h1 className={`font-bold mb-6 ${isAudioOnlyMode ? "text-3xl" : "text-4xl"}`}>
+                {subtitleWords.map((word, wordIdx) => {
+                  const globalIndex = mapping.subTitleStart + wordIdx;
+                  const isHighlighted = globalIndex === highlightedWordIndex;
+                  return (
+                    <span
+                      key={`sub-${globalIndex}`}
+                      className={
+                        isHighlighted
+                          ? "bg-yellow-300 rounded-sm px-0.5"
+                          : undefined
+                      }
+                    >
+                      {word}
+                      {wordIdx !== subtitleWords.length - 1 ? " " : ""}
+                    </span>
+                  );
+                })}
+              </h1>
+              <div className="relative mx-auto w-4/5 h-96 mt-4 mb-8 border-2 border-dashed border-gray-300 rounded-md overflow-hidden bg-white/60">
+                {getSafeImageSrc(page.imageUrl) ? (
+                  <Image
+                    src={getSafeImageSrc(page.imageUrl)}
+                    alt={page.subTitle || `Page ${index + 1} illustration`}
+                    fill
+                    className="object-cover"
+                    sizes="(max-width: 768px) 80vw, 40vw"
+                  />
+                ) : (
+                  <div className="h-full w-full flex items-center justify-center text-center text-sm text-gray-700 px-4">
+                    Image not generated (rate limited / try again)
+                  </div>
+                )}
               </div>
-              <p className="mt-4 text-lg">{page.textContent}</p>
+              {!isAudioOnlyMode && (
+                <p className="mt-4 text-lg leading-8 break-words">
+                  {contentWords.map((word, wordIdx) => {
+                    const globalIndex = mapping.contentStart + wordIdx;
+                    const isHighlighted = globalIndex === highlightedWordIndex;
+                    return (
+                      <span
+                        key={`content-${globalIndex}`}
+                        className={
+                          isHighlighted
+                            ? "bg-yellow-300 rounded-sm px-0.5"
+                            : undefined
+                        }
+                      >
+                        {word}
+                        {wordIdx !== contentWords.length - 1 ? " " : ""}
+                      </span>
+                    );
+                  })}
+                </p>
+              )}
             </div>
 
             <span className="absolute bottom-4 right-6">Page {index + 1}</span>
           </div>
-        ))}
+        )})}
 
         <div className="flex flex-col justify-center items-center p-6 h-full bg-white">
           <p className="flex justify-center items-center h-screen">
@@ -216,7 +692,7 @@ export default function BookView({ data }) {
         </div>
       </HTMLFlipbook>
 
-      <div className="items-center fixed bottom-4 left-1/2 transform -translate-x-1/2 flex space-x-4 bg-opacity-50 p-2 rounded-lg shadow-lg">
+      <div className="sticky bottom-3 z-30 mt-5 mx-auto max-w-4xl w-full flex flex-wrap items-center justify-center gap-3 rounded-lg border bg-white/90 p-3 shadow-lg backdrop-blur">
         {/* prev */}
         <div
           className={`p-2 rounded-full hover:bg-opacity-70 bg-transparent ${
@@ -262,19 +738,21 @@ export default function BookView({ data }) {
         </div>
 
         {/* colors */}
-        <div className="flex space-x-3">
-          {colors.map((color) => (
-            <div
-              key={color}
-              className={`w-5 h-5 rounded-full cursor-pointer ${
-                color === "gray"
-                  ? "bg-white border-2 border-gray-300"
-                  : `bg-${color}-500`
-              }`}
-              onClick={() => setColor(color)}
-            ></div>
-          ))}
-        </div>
+        {!isAudioOnlyMode && (
+          <div className="flex space-x-3">
+            {colors.map((color) => (
+              <div
+                key={color}
+                className={`w-5 h-5 rounded-full cursor-pointer ${
+                  color === "gray"
+                    ? "bg-white border-2 border-gray-300"
+                    : `bg-${color}-500`
+                }`}
+                onClick={() => setColor(color)}
+              ></div>
+            ))}
+          </div>
+        )}
 
         {canUseSpeech && (
           <div className="flex items-center space-x-2 ml-4">
@@ -282,15 +760,23 @@ export default function BookView({ data }) {
               variant="outline"
               size="sm"
               onClick={handleReadStory}
-              disabled={isSpeaking || !fullStoryText}
+              disabled={!hasReadableText}
             >
-              Read Story
+              {isPaused ? "Resume" : "Read Story"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handlePauseReading}
+              disabled={!isSpeaking}
+            >
+              Pause
             </Button>
             <Button
               variant="outline"
               size="sm"
               onClick={handleStopReading}
-              disabled={!isSpeaking}
+              disabled={!isSpeaking && !isPaused}
             >
               Stop
             </Button>
@@ -300,6 +786,8 @@ export default function BookView({ data }) {
     </div>
   );
 }
+
+
 
 // const data = {
 //   title: "3 Little Acorns Learn About AI",

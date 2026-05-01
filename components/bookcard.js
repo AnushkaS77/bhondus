@@ -12,13 +12,12 @@ export default function BookCard({ book }) {
       <CardHeader className="flex flex-col pb-2">
         <div className="w-full aspect-[3/2] relative overflow-hidden rounded-md">
           {book?.bookCoverUrl && (
-            <Image
-              src={book?.bookCoverUrl}
-              alt={book?.bookTitle}
-              layout="fill"
-              objectFit="cover"
-              className="w-full h-full"
-            />
+            <img
+            src={book?.bookCoverUrl}
+            alt={book?.bookTitle}
+            className="w-full h-full object-cover rounded-md"
+          />
+          
           )}
         </div>
 

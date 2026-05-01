@@ -9,7 +9,7 @@ const fredoka = Fredoka({
 });
 
 export const metadata = {
-  title: "AI Kids Book Generatot",
+  title: "Story Tailor",
   description: "Generate kids books using AI",
 };
 

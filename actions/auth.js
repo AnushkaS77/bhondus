@@ -30,7 +30,13 @@ export const authCheckAction = async () => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    await db();
+    
+    try {
+      await db();
+    } catch (dbErr) {
+      console.error("Database connection error in authCheckAction:", dbErr);
+      return { loggedIn: false };
+    }
 
     const user = await User.findById(decoded._id).select("-password -__v");
     return { user: JSON.parse(JSON.stringify(user)), loggedIn: true };
@@ -50,34 +56,54 @@ export const loginOrRegisterAction = async (email, password) => {
     return { error: "Password must be at least 6 characters", loggedIn: false };
   }
 
-  await db();
-
-  let user = await User.findOne({ email });
-
-  if (user) {
-    const match = await comparePassword(password, user.password);
-    console.log("password match ===> ", match);
-    if (!match) return { error: "Invalid password", loggedIn: false };
-  } else {
-    // create user
-    user = new User({
-      email,
-      password: await hashPassword(password),
-      name: email.split("@")[0],
-    });
-
-    await user.save();
+  try {
+    await db();
+  } catch (err) {
+    console.error("Database connection error in loginOrRegisterAction:", err);
+    // In development, show more detailed error; in production, show generic message
+    const errorMessage = process.env.NODE_ENV === "development" 
+      ? err.message || "Database connection failed. Please check your MongoDB connection."
+      : "Database connection failed. Please try again later.";
+    return { 
+      error: errorMessage, 
+      loggedIn: false 
+    };
   }
 
-  const { _id, name, role } = user;
-  const token = generateToken({ _id, name, role, email });
+  try {
+    let user = await User.findOne({ email });
 
-  await setAuthCookie(token);
+    if (user) {
+      const match = await comparePassword(password, user.password);
+      console.log("password match ===> ", match);
+      if (!match) return { error: "Invalid password", loggedIn: false };
+    } else {
+      // create user
+      user = new User({
+        email,
+        password: await hashPassword(password),
+        name: email.split("@")[0],
+      });
 
-  return {
-    user: { name, role, email },
-    loggedIn: true,
-  };
+      await user.save();
+    }
+
+    const { _id, name, role } = user;
+    const token = generateToken({ _id, name, role, email });
+
+    await setAuthCookie(token);
+
+    return {
+      user: { name, role, email },
+      loggedIn: true,
+    };
+  } catch (err) {
+    console.error("Error in loginOrRegisterAction:", err);
+    return { 
+      error: err.message || "Login failed. Please try again.", 
+      loggedIn: false 
+    };
+  }
 };
 
 export const logoutAction = async () => {

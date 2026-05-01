@@ -12,7 +12,6 @@ export default function DashboardMenu() {
       </div>
       <div className="flex flex-wrap gap-3 mr-2">
         <Link href="/dashboard/generate-book">Generate Book</Link>
-        <Link href="/dashboard/setttings">Settings</Link>
         <div className="hover:text-red-800 cursor-pointer" onClick={logout}>
           Logout
         </div>
